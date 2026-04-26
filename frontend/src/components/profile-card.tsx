@@ -3,6 +3,8 @@ import { useState, useCallback, KeyboardEvent } from "react";
 import { isValidStellarAddress } from "@/lib/stellar";
 import { useToast } from "@/lib/use-toast";
 
+import { ProfileCardSkeleton } from "./skeleton";
+
 type Asset = {
   code: string;
   issuer?: string | null;
@@ -26,6 +28,7 @@ type ProfileCardProps = {
   twitterHandle?: string;
   githubHandle?: string;
   stats?: ProfileStats;
+  isLoading?: boolean;
 };
 
 export function ProfileCard({
@@ -40,9 +43,13 @@ export function ProfileCard({
   twitterHandle,
   githubHandle,
   stats,
+  isLoading,
 }: ProfileCardProps) {
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+
+  if (isLoading) return <ProfileCardSkeleton />;
+
   const { showToast } = useToast();
   const isValid = isValidStellarAddress(walletAddress);
   const hasSocialLinks = email || websiteUrl || twitterHandle || githubHandle;

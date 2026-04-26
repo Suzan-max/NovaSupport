@@ -202,7 +202,7 @@ export default async function ProfilePage({ params }: PageProps) {
 
   return (
     <AppShell>
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 items-start animate-fade-in">
         <div className="space-y-12">
           <div className="space-y-3">
             <ProfileCard
@@ -326,17 +326,19 @@ export default async function ProfilePage({ params }: PageProps) {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-sky/60">Total Raised</span>
-                <span className="text-sm font-bold text-white">12.4k XLM</span>
+                <span className="text-sm font-bold text-white">
+                  {stats?.assetTotals?.[0]?.total || "0"} {stats?.assetTotals?.[0]?.assetCode || "XLM"}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-sky/60">Supporters</span>
-                <span className="text-sm font-bold text-white">142</span>
+                <span className="text-sm font-bold text-white">{stats?.uniqueSupporters || 0}</span>
               </div>
               <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden mt-2">
-                <div className="bg-mint h-full w-[65%]" />
+                <div className="bg-mint h-full w-[25%]" />
               </div>
               <p className="text-[10px] text-steel text-center italic">
-                65% of monthly goal reached
+                Stats updated recently
               </p>
             </div>
           </div>

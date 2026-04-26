@@ -74,4 +74,13 @@ describe('ProfileCard', () => {
     expect(screen.getByText('XLM')).toBeInTheDocument();
     expect(screen.getByText('USDC')).toBeInTheDocument();
   });
+
+  it('renders skeleton when isLoading is true', () => {
+    const { container } = render(<ProfileCard {...mockProfile} isLoading={true} />);
+    
+    // The skeleton article is rendered
+    expect(container.querySelector('article')).toBeInTheDocument();
+    // The display name should NOT be rendered
+    expect(screen.queryByText('Stellar Developer')).not.toBeInTheDocument();
+  });
 });
