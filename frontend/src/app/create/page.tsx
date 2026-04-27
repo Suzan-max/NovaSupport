@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL } from "@/lib/config";
 import { AppShell } from "@/components/app-shell";
@@ -18,6 +18,12 @@ interface FormData {
   githubHandle: string;
   websiteUrl: string;
   email: string;
+}
+
+type BackendField = "username" | "email";
+
+function formatRateLimitMessage(minutes: number): string {
+  return `Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
 }
 
 const CONSTRAINTS = [
@@ -49,10 +55,46 @@ export default function CreatePage() {
   });
 
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<BackendField, string | null>>({
+    username: null,
+    email: null,
+  });
   const [loading, setLoading] = useState(false);
+  const [rateLimitAttempts, setRateLimitAttempts] = useState(0);
+  const [rateLimitRetryAt, setRateLimitRetryAt] = useState<number | null>(null);
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
   const [assets, setAssets] = useState<Array<{ code: string; issuer: string }>>([
     { code: "XLM", issuer: "" },
   ]);
+
+  useEffect(() => {
+    if (!rateLimitRetryAt) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setCooldownNow(Date.now());
+      if (Date.now() >= rateLimitRetryAt) {
+        setRateLimitRetryAt(null);
+        setError(null);
+        setLoading(false);
+        window.clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [rateLimitRetryAt]);
+
+  const rateLimitRemainingMinutes =
+    rateLimitRetryAt && rateLimitRetryAt > cooldownNow
+      ? Math.max(1, Math.ceil((rateLimitRetryAt - cooldownNow) / 60000))
+      : 0;
+  const rateLimited = rateLimitRemainingMinutes > 0;
+  const usernameFieldError =
+    fieldErrors.username ??
+    (form.username && !/^[a-zA-Z0-9\-]+$/.test(form.username)
+      ? "Username can only contain alphanumeric characters and hyphens."
+      : null);
 
   function set(field: keyof FormData) {
     return (
@@ -60,6 +102,9 @@ export default function CreatePage() {
     ) => {
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
       setError(null);
+      if (field === "username" || field === "email") {
+        setFieldErrors((prev) => ({ ...prev, [field]: null }));
+      }
     };
   }
 
@@ -81,6 +126,10 @@ export default function CreatePage() {
   const emailValid =
     form.email === "" ||
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
+
+  const emailFieldError =
+    fieldErrors.email ??
+    (form.email && !emailValid ? "Enter a valid email address." : null);
 
   const handleNext = () => {
     if (step === 1) {
@@ -125,6 +174,7 @@ export default function CreatePage() {
 
   async function handleSubmit() {
     setError(null);
+    setFieldErrors({ username: null, email: null });
 
     if (step < 3) {
       handleNext();
@@ -134,6 +184,13 @@ export default function CreatePage() {
     if (!walletValidation.isValid) {
       showToast(walletValidation.error || "Please enter a valid Stellar address.", "error");
       setError(walletValidation.error || "Wallet address must be a valid Stellar public key starting with G.");
+      return;
+    }
+
+    if (rateLimited) {
+      const message = formatRateLimitMessage(rateLimitRemainingMinutes);
+      showToast(message, "error");
+      setError(message);
       return;
     }
 
@@ -156,18 +213,47 @@ export default function CreatePage() {
         body: JSON.stringify(payload),
       });
 
-      if (res.status === 409) {
-        showToast("That username is already taken.", "error");
-        setError("Username already taken.");
-      } else if (!res.ok) {
-        showToast("Something went wrong. Please try again.", "error");
-        setError("Something went wrong. Please try again.");
-      } else {
+      if (res.ok) {
         const profile = await res.json();
         showToast("Profile created!", "success");
+        setRateLimitAttempts(0);
+        setRateLimitRetryAt(null);
         setTimeout(() => {
           router.push(`/profile/${profile.username}`);
         }, 2000);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        const code = typeof body.code === "string" ? body.code : "";
+        const message =
+          typeof body.error === "string"
+            ? body.error
+            : "Something went wrong. Please try again.";
+
+        if (code === "USERNAME_TAKEN") {
+          setStep(1);
+          setFieldErrors({ username: "That username is already taken.", email: null });
+          showToast("That username is already taken.", "error");
+          setError("Username already taken.");
+        } else if (code === "EMAIL_TAKEN") {
+          setFieldErrors({ username: null, email: "That email address is already in use." });
+          showToast("That email address is already in use.", "error");
+          setError("Email already in use.");
+        } else if (code === "RATE_LIMIT_EXCEEDED" || res.status === 429) {
+          const retryAfterHeader = Number(res.headers.get("Retry-After"));
+          const retryMinutes = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+            ? Math.max(1, Math.ceil(retryAfterHeader / 60))
+            : Math.min(60, 2 ** rateLimitAttempts || 1);
+          const nextRetryAt = Date.now() + retryMinutes * 60_000;
+
+          setRateLimitAttempts((current) => current + 1);
+          setRateLimitRetryAt(nextRetryAt);
+          const rateLimitMessage = formatRateLimitMessage(retryMinutes);
+          showToast(rateLimitMessage, "error");
+          setError(rateLimitMessage);
+        } else {
+          showToast(message, "error");
+          setError(message);
+        }
       }
     } catch {
       showToast("Something went wrong. Please try again.", "error");
@@ -208,14 +294,14 @@ export default function CreatePage() {
                     <label className="text-[10px] uppercase tracking-[0.25em] text-steel">
                       Display Name <span className="text-mint">*</span>
                     </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={64}
-                      placeholder="e.g. Star Voyager"
-                      value={form.displayName}
-                      onChange={set("displayName")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-steel/40 focus:border-mint/50 focus:outline-none focus:ring-1 focus:ring-mint/20 transition"
+                      <input
+                        type="text"
+                        required
+                        maxLength={64}
+                        placeholder="e.g. Star Voyager"
+                        value={form.displayName}
+                        onChange={set("displayName")}
+                        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-steel/40 focus:border-mint/50 focus:outline-none focus:ring-1 focus:ring-mint/20 transition"
                     />
                   </div>
 
@@ -235,9 +321,18 @@ export default function CreatePage() {
                         placeholder="username"
                         value={form.username}
                         onChange={set("username")}
-                        className="w-full rounded-2xl border border-white/10 bg-white/5 pl-8 pr-4 py-3 text-sm text-white placeholder:text-steel/40 focus:border-mint/50 focus:outline-none focus:ring-1 focus:ring-mint/20 transition"
+                        className={`w-full rounded-2xl border bg-white/5 pl-8 pr-4 py-3 text-sm placeholder:text-steel/40 focus:outline-none focus:ring-1 transition ${
+                          usernameFieldError
+                            ? "border-red-500/40 text-red-300 focus:border-red-500/50 focus:ring-red-500/20"
+                            : "border-white/10 text-white focus:border-mint/50 focus:ring-mint/20"
+                        }`}
                       />
                     </div>
+                    {usernameFieldError && (
+                      <p className="text-[10px] text-red-400 pl-1">
+                        {usernameFieldError}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -412,11 +507,15 @@ export default function CreatePage() {
                     placeholder="you@example.com"
                     value={form.email}
                     onChange={set("email")}
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-steel/40 focus:border-mint/50 focus:outline-none focus:ring-1 focus:ring-mint/20 transition"
+                    className={`w-full rounded-2xl border bg-white/5 px-4 py-3 text-sm placeholder:text-steel/40 focus:outline-none focus:ring-1 transition ${
+                      emailFieldError
+                        ? "border-red-500/40 text-red-300 focus:border-red-500/50 focus:ring-red-500/20"
+                        : "border-white/10 text-white focus:border-mint/50 focus:ring-mint/20"
+                    }`}
                   />
-                  {form.email && !emailValid && (
+                  {emailFieldError && (
                     <p className="text-[10px] text-red-400 pl-1">
-                      Enter a valid email address
+                      {emailFieldError}
                     </p>
                   )}
                 </div>
@@ -427,6 +526,12 @@ export default function CreatePage() {
               <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                 {error}
               </div>
+            )}
+
+            {rateLimited && (
+              <p className="text-sm text-gold">
+                {formatRateLimitMessage(rateLimitRemainingMinutes)}
+              </p>
             )}
 
             <div className="flex gap-4 pt-4">
@@ -442,10 +547,12 @@ export default function CreatePage() {
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={loading}
+                disabled={loading || rateLimited}
                 className="flex-[2] rounded-full bg-mint px-5 py-4 text-sm font-semibold text-ink transition hover:bg-white active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading
+                {rateLimited
+                  ? `Try again in ${rateLimitRemainingMinutes} minute${rateLimitRemainingMinutes === 1 ? "" : "s"}`
+                  : loading
                   ? "Creating profile…"
                   : step === 3
                   ? "Create Profile →"

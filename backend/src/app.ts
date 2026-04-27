@@ -72,7 +72,10 @@ function createRateLimiters() {
     limit: 200,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: "Too many requests, please try again later." },
+    message: {
+      error: "Too many requests, please try again later.",
+      code: "RATE_LIMIT_EXCEEDED",
+    },
   });
 
   const writeLimiter = rateLimit({
@@ -80,7 +83,10 @@ function createRateLimiters() {
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: "Too many requests, please try again later." },
+    message: {
+      error: "Too many requests, please try again later.",
+      code: "RATE_LIMIT_EXCEEDED",
+    },
   });
 
   // Stricter limiter for profile creation: 3 per hour per IP (#276)
@@ -1418,6 +1424,8 @@ export function createApp(customLogger?: Logger) {
    *                 default: pending
    *               message:
    *                 type: string
+   *                 maxLength: 280
+   *                 description: Sanitized support message
    *               stellarNetwork:
    *                 type: string
    *                 default: TESTNET
@@ -1440,6 +1448,10 @@ export function createApp(customLogger?: Logger) {
    *         description: Support transaction recorded
    *       400:
    *         description: Invalid request body
+   *       422:
+   *         description: Transaction rejected by Horizon
+   *       503:
+   *         description: Horizon is unavailable
    *       500:
    *         description: Internal server error
    */
