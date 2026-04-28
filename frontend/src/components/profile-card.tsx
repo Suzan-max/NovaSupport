@@ -43,16 +43,43 @@ export function ProfileCard({
   twitterHandle,
   githubHandle,
   stats,
-  isLoading,
-}: ProfileCardProps) {
+  isVerified,
+}: ProfileCardProps & { isVerified?: boolean }) {
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [resending, setResending] = useState(false);
 
   if (isLoading) return <ProfileCardSkeleton />;
 
   const { showToast } = useToast();
   const isValid = isValidStellarAddress(walletAddress);
   const hasSocialLinks = email || websiteUrl || twitterHandle || githubHandle;
+
+  const currentWallet = typeof window !== 'undefined' ? localStorage.getItem('walletAddress') : null;
+  const isOwner = currentWallet === walletAddress;
+
+  const handleResend = async () => {
+    setResending(true);
+    try {
+      const token = localStorage.getItem("authToken");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/profiles/${username}/resend-verification-email`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Verification email resent!", "success");
+      } else {
+        showToast(data.error || "Failed to resend email", "error");
+      }
+    } catch (err) {
+      showToast("Connection error", "error");
+    } finally {
+      setResending(false);
+    }
+  };
 
   const handleCopy = useCallback(async () => {
     try {
@@ -108,20 +135,49 @@ export function ProfileCard({
   const expertUrl = `https://stellar.expert/explorer/testnet/account/${walletAddress}`;
 
   return (
-    <article className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 sm:p-7 shadow-xl shadow-black/15">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex gap-4">
-          {avatarUrl ? (
-            <img src={avatarUrl} alt={displayName} className="w-16 h-16 rounded-full object-cover" />
-          ) : (
-            <div className="w-16 h-16 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xl font-bold">
-              {displayName.slice(0, 2).toUpperCase()}
+    <div className="space-y-4">
+      {isOwner && !isVerified && (
+        <div className="rounded-2xl border border-gold/30 bg-gold/5 p-4 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">✉️</span>
+            <div>
+              <p className="text-sm font-semibold text-white">Verify your email address</p>
+              <p className="text-xs text-sky/70">Check your inbox to secure your profile and receive notifications.</p>
             </div>
-          )}
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-mint">@{username}</p>
-            <h1 className="mt-3 text-2xl sm:text-3xl font-semibold text-white">{displayName}</h1>
-            <p className="mt-4 max-w-2xl text-sm sm:text-base leading-relaxed sm:leading-7 text-sky/80">{bio}</p>
+          </div>
+          <button
+            onClick={handleResend}
+            disabled={resending}
+            className="text-xs font-bold text-gold hover:text-white transition-colors disabled:opacity-50"
+          >
+            {resending ? 'Sending...' : 'Resend link'}
+          </button>
+        </div>
+      )}
+
+      <article className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 sm:p-7 shadow-xl shadow-black/15">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex gap-4">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={displayName} className="w-16 h-16 rounded-full object-cover" />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xl font-bold">
+                {displayName.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="text-xs uppercase tracking-[0.3em] text-mint">@{username}</p>
+                {isVerified && (
+                  <span title="Verified Creator" className="flex items-center justify-center w-4 h-4 rounded-full bg-mint text-ink text-[10px] font-bold">
+                    ✓
+                  </span>
+                )}
+              </div>
+              <h1 className="mt-3 text-2xl sm:text-3xl font-semibold text-white flex items-center gap-3">
+                {displayName}
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm sm:text-base leading-relaxed sm:leading-7 text-sky/80">{bio}</p>
 
             {stats && (
               <div className="mt-6 flex flex-wrap gap-8 items-center border-t border-white/5 pt-6">
@@ -269,5 +325,6 @@ export function ProfileCard({
         </div>
       </div>
     </article>
+    </div>
   );
 }

@@ -105,7 +105,19 @@ function createRateLimiters() {
     message: { error: "Too many profiles created from this IP address. Please try again in an hour.", code: "RATE_LIMIT_EXCEEDED" },
   });
 
-  return { globalLimiter, writeLimiter, profileCreationLimiter };
+  const resendLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 1,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: "Verification email already sent. Please wait 5 minutes before trying again.",
+      code: "RATE_LIMIT_EXCEEDED",
+    },
+    keyGenerator: (req: any) => `${req.ip}-${req.params.username}`,
+  });
+
+  return { globalLimiter, writeLimiter, profileCreationLimiter, resendLimiter };
 }
 
 function sendError(
@@ -119,7 +131,7 @@ function sendError(
 
 export function createApp(customLogger?: Logger) {
   const app = express();
-  const { globalLimiter, writeLimiter, profileCreationLimiter } = createRateLimiters();
+  const { globalLimiter, writeLimiter, profileCreationLimiter, resendLimiter } = createRateLimiters();
 
   const swaggerSpec = swaggerJsdoc({
     definition: {
@@ -1090,6 +1102,57 @@ export function createApp(customLogger?: Logger) {
       return sendError(res, 500, "Internal server error");
     }
   });
+
+  app.post(
+    "/profiles/:username/resend-verification-email",
+    requireAuth,
+    resendLimiter,
+    async (req, res) => {
+      const { username } = req.params;
+      const userId = (req.auth!.userId || req.auth!.walletAddress) as string;
+
+      try {
+        const profile = await prisma.profile.findUnique({
+          where: { username },
+          include: { owner: true },
+        });
+
+        if (!profile) {
+          return sendError(res, 404, "Profile not found");
+        }
+
+        if (profile.ownerId !== userId) {
+          return sendError(res, 403, "Forbidden");
+        }
+
+        if (profile.emailVerified) {
+          return sendError(res, 400, "Email already verified");
+        }
+
+        if (!profile.email) {
+          return sendError(res, 400, "No email address associated with this profile");
+        }
+
+        const token = randomBytes(32).toString("hex");
+        const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+        await prisma.profile.update({
+          where: { id: profile.id },
+          data: {
+            emailVerificationToken: token,
+            emailVerificationExpiry: expiry,
+          },
+        });
+
+        await sendVerificationEmail(profile.email, profile.username, token);
+
+        return res.json({ ok: true, message: "Verification email resent" });
+      } catch (e: unknown) {
+        req.log.error({ err: e }, "error resending verification email");
+        return sendError(res, 500, "Internal server error");
+      }
+    },
+  );
 
   // ── Update accepted assets ────────────────────────────────────────────
 

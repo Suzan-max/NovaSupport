@@ -21,6 +21,7 @@ type Profile = {
   walletAddress: string;
   avatarUrl?: string | null;
   acceptedAssets: Array<{ code: string; issuer?: string | null }>;
+  emailVerified?: boolean;
 };
 
 type SupportTx = {
@@ -212,6 +213,7 @@ export default async function ProfilePage({ params }: PageProps) {
               walletAddress={profile.walletAddress}
               acceptedAssets={profile.acceptedAssets}
               avatarUrl={profile.avatarUrl || undefined}
+              isVerified={profile.emailVerified}
               stats={stats || undefined}
             />
             <div className="px-2">
