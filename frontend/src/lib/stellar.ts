@@ -13,6 +13,10 @@ import { HORIZON_URL, STELLAR_NETWORK, NETWORK_PASSPHRASE } from "./config";
 import { CONTRACT_ID } from "./config";
 import { contractClient } from "./contract-client";
 
+// Re-export wallet utilities so callers can import from a single stellar module.
+export { getAvailableWallets, getWalletAdapter } from "./wallet-adapters";
+export type { WalletAdapter, WalletId } from "./wallet-adapters";
+
 export const stellarConfig = {
   horizonUrl: HORIZON_URL,
   stellarNetwork: STELLAR_NETWORK,

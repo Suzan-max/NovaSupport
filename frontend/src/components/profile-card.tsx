@@ -44,14 +44,13 @@ export function ProfileCard({
   githubHandle,
   stats,
   isVerified,
+  isLoading,
 }: ProfileCardProps & { isVerified?: boolean }) {
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [resending, setResending] = useState(false);
-
-  if (isLoading) return <ProfileCardSkeleton />;
-
   const { showToast } = useToast();
+
   const isValid = isValidStellarAddress(walletAddress);
   const hasSocialLinks = email || websiteUrl || twitterHandle || githubHandle;
 
@@ -133,6 +132,8 @@ export function ProfileCard({
   const tweetUrl = `https://twitter.com/intent/tweet?text=${tweetText}`;
 
   const expertUrl = `https://stellar.expert/explorer/testnet/account/${walletAddress}`;
+
+  if (isLoading) return <ProfileCardSkeleton />;
 
   return (
     <div className="space-y-4">
