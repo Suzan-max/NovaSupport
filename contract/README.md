@@ -54,12 +54,197 @@ If deployment or invocation fails, check the following first:
 - Check the deployer and supporter addresses in Stellar Expert:
   https://stellar.expert/explorer/testnet/contract/<CONTRACT_ID>
 
-Common failures:
+### Common Deployment Errors
 
-- `ContractNotInitialized` usually means `initialize()` has not been called yet.
-- `ContractPaused` means the admin paused support calls.
-- `InsufficientBalance` means the supporter account does not have enough of the selected asset.
-- `MessageTooLong` or `InvalidAssetCode` means the request data does not match the contract validation rules.
+#### Error: "account not found"
+
+**Cause:** The deployer account doesn't exist or isn't funded on the target network.
+
+**Solution:**
+
+```bash
+# Fund your testnet account using Friendbot
+curl "https://friendbot.stellar.org?addr=YOUR_PUBLIC_KEY"
+
+# Or use the Stellar Laboratory
+# https://laboratory.stellar.org/#account-creator?network=test
+```
+
+#### Error: "insufficient balance" or "tx_insufficient_balance"
+
+**Cause:** The account doesn't have enough XLM to cover the deployment fee and minimum balance.
+
+**Solution:** Ensure your account has at least 10 XLM for testnet deployments. Deployment typically costs 0.1-1 XLM depending on contract size.
+
+#### Error: "wasm file not found"
+
+**Cause:** The WASM file wasn't built or is in the wrong location.
+
+**Solution:**
+
+```bash
+# Rebuild the contract
+cd contract
+stellar contract build
+
+# Verify the WASM exists
+ls -lh target/wasm32-unknown-unknown/release/*.wasm
+```
+
+#### Error: "contract already exists" or "ContractAlreadyExists"
+
+**Cause:** Trying to deploy with the same WASM hash that's already deployed.
+
+**Solution:** This is usually fine - you can reuse the existing contract ID. If you need a fresh instance, modify the contract code slightly or use a different deployer account.
+
+#### Error: "transaction malformed" or "tx_bad_seq"
+
+**Cause:** Sequence number mismatch or network connectivity issues.
+
+**Solution:**
+
+```bash
+# Check your network configuration
+stellar config network list
+
+# Verify you're using the correct network
+stellar config network current
+
+# Try again with explicit network flag
+stellar contract deploy --network testnet --source mykey --wasm <path>
+```
+
+### Common Invocation Errors
+
+#### Error: "ContractNotInitialized"
+
+**Cause:** The `initialize()` function hasn't been called yet.
+
+**Solution:**
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --network testnet \
+  --source mykey \
+  -- initialize \
+  --admin <ADMIN_ADDRESS>
+```
+
+#### Error: "ContractPaused"
+
+**Cause:** The admin paused support calls.
+
+**Solution:** Contact the contract admin to unpause, or if you're the admin:
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --network testnet \
+  --source admin-key \
+  -- unpause
+```
+
+#### Error: "InsufficientBalance"
+
+**Cause:** The supporter account doesn't have enough of the selected asset.
+
+**Solution:** Fund the supporter account with the required asset. For XLM:
+
+```bash
+curl "https://friendbot.stellar.org?addr=SUPPORTER_ADDRESS"
+```
+
+#### Error: "MessageTooLong"
+
+**Cause:** The support message exceeds the maximum allowed length (typically 280 characters).
+
+**Solution:** Shorten the message and try again.
+
+#### Error: "InvalidAssetCode"
+
+**Cause:** The asset code doesn't match the contract validation rules (1-12 alphanumeric characters).
+
+**Solution:** Use a valid asset code like "XLM", "USDC", or "AQUA".
+
+#### Error: "Unauthorized" or "NotAdmin"
+
+**Cause:** Trying to call an admin-only function without admin privileges.
+
+**Solution:** Ensure you're using the admin keypair that was set during initialization.
+
+### Network and RPC Issues
+
+#### Error: "connection refused" or "network timeout"
+
+**Cause:** Can't reach the Soroban RPC endpoint.
+
+**Solution:**
+
+```bash
+# Check RPC endpoint status
+curl https://soroban-testnet.stellar.org/health
+
+# Try alternative RPC endpoints
+stellar config network add testnet-alt \
+  --rpc-url https://rpc-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+
+# Use the alternative network
+stellar contract invoke --network testnet-alt ...
+```
+
+#### Error: "rate limit exceeded"
+
+**Cause:** Too many requests to the public RPC endpoint.
+
+**Solution:**
+
+- Wait a few minutes and try again
+- Use your own RPC node
+- Batch multiple operations together
+- Consider using a paid RPC provider for production
+
+### Debugging Tips
+
+1. **Enable verbose logging:**
+
+   ```bash
+   RUST_LOG=debug stellar contract invoke ...
+   ```
+
+2. **Check transaction in Stellar Expert:**
+   - Go to https://stellar.expert/explorer/testnet
+   - Search for your transaction hash
+   - Review the operations and error details
+
+3. **Verify contract state:**
+
+   ```bash
+   # Check if contract is initialized
+   stellar contract invoke --id <CONTRACT_ID> --network testnet -- is_initialized
+
+   # Check pause status
+   stellar contract invoke --id <CONTRACT_ID> --network testnet -- is_paused
+   ```
+
+4. **Test with Stellar Laboratory:**
+   - Use https://laboratory.stellar.org to manually build and submit transactions
+   - Helpful for debugging parameter encoding issues
+
+5. **Check contract events:**
+   ```bash
+   stellar contract events --id <CONTRACT_ID> --network testnet --count 10
+   ```
+
+### Getting Help
+
+If you're still stuck:
+
+1. Check the [Stellar Discord](https://discord.gg/stellar) #soroban channel
+2. Review [Soroban documentation](https://developers.stellar.org/docs/smart-contracts)
+3. Search [Stellar Stack Exchange](https://stellar.stackexchange.com/)
+4. File an issue in the [NovaSupport repository](https://github.com/your-org/novasupport/issues)
 
 ## Verification
 
