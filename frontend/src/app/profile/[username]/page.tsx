@@ -6,6 +6,7 @@ import { SupportPanel } from "@/components/support-panel";
 import { ProfileTabs } from "@/components/profile-tabs";
 import { QRCodeButton } from "@/components/qr-code-button";
 import { EmptyState } from "@/components/empty-state";
+import { EmbedCodeGenerator } from "@/components/embed-widget";
 import { API_BASE_URL } from "@/lib/config";
 
 type PageProps = {
@@ -102,6 +103,11 @@ export async function generateMetadata({
       description:
         profile.bio ?? `Support ${profile.displayName} on NovaSupport`,
       images: profile.avatarUrl ? [profile.avatarUrl] : [],
+    },
+    alternates: {
+      types: {
+        "application/rss+xml": `${API_BASE_URL}/profiles/${params.username}/feed.xml`,
+      },
     },
   };
 }
@@ -282,6 +288,10 @@ export default async function ProfilePage({ params }: PageProps) {
           
           <div className="px-2">
             <ProfileTabs username={profile.username} />
+          </div>
+
+          <div className="px-2">
+            <EmbedCodeGenerator username={profile.username} />
           </div>
         </div>
 

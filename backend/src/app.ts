@@ -8,6 +8,7 @@ import { z } from "zod";
 import { StrKey, Horizon } from "@stellar/stellar-sdk";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
+import * as Sentry from "@sentry/node";
 import { prisma } from "./db.js";
 import { Prisma } from "@prisma/client";
 import { logger } from "./logger.js";
@@ -227,6 +228,10 @@ export function createApp(customLogger?: Logger) {
   app.use(sanitizeBody);
   app.use(sanitizeQuery);
   app.use(pinoHttp({ logger: customLogger ?? logger }));
+  // Attach Sentry request/tracing breadcrumbs when DSN is configured
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.expressErrorHandler());
+  }
   app.use(globalLimiter);
 
   // ── API-Version header on every response ──────────────────────────────
@@ -419,6 +424,11 @@ export function createApp(customLogger?: Logger) {
 
     // Sign JWT
     const token = signJWT(walletAddress, user.id);
+
+    // Attach wallet address as Sentry user context for session breadcrumbs
+    if (process.env.SENTRY_DSN) {
+      Sentry.setUser({ id: user.id, username: walletAddress });
+    }
 
     res.json({ token, walletAddress, userId: user.id });
   });
@@ -1182,6 +1192,67 @@ export function createApp(customLogger?: Logger) {
     },
   );
 
+  // ── Notification preferences (#475) ──────────────────────────────────
+
+  const notifPrefsSchema = z.object({
+    notifyOnSupport: z.boolean().optional(),
+    notifyOnMilestone: z.boolean().optional(),
+    weeklyDigest: z.boolean().optional(),
+  });
+
+  v1Router.get("/profiles/:username/notification-preferences", requireAuth, async (req, res) => {
+    const { username } = req.params;
+
+    const profile = await prisma.profile.findUnique({ where: { username } });
+    if (!profile) return sendError(res, 404, "Profile not found");
+
+    if (!req.auth || req.auth.walletAddress !== profile.walletAddress) {
+      return sendError(res, 403, "Forbidden: You do not own this profile");
+    }
+
+    const prefs = await prisma.notificationPreferences.findUnique({
+      where: { profileId: profile.id },
+    });
+
+    // Return defaults when no preferences row exists yet
+    return res.json(
+      prefs ?? {
+        notifyOnSupport: true,
+        notifyOnMilestone: true,
+        weeklyDigest: false,
+      },
+    );
+  });
+
+  v1Router.patch("/profiles/:username/notification-preferences", requireAuth, writeLimiter, async (req, res) => {
+    const { username } = req.params;
+
+    const parsed = notifPrefsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return sendError(res, 400, "Invalid request body");
+    }
+
+    const profile = await prisma.profile.findUnique({ where: { username } });
+    if (!profile) return sendError(res, 404, "Profile not found");
+
+    if (!req.auth || req.auth.walletAddress !== profile.walletAddress) {
+      return sendError(res, 403, "Forbidden: You do not own this profile");
+    }
+
+    const prefs = await prisma.notificationPreferences.upsert({
+      where: { profileId: profile.id },
+      update: parsed.data,
+      create: {
+        profileId: profile.id,
+        notifyOnSupport: parsed.data.notifyOnSupport ?? true,
+        notifyOnMilestone: parsed.data.notifyOnMilestone ?? true,
+        weeklyDigest: parsed.data.weeklyDigest ?? false,
+      },
+    });
+
+    return res.json(prefs);
+  });
+
   // ── Update accepted assets ────────────────────────────────────────────
 
   const updateAssetsSchema = z.object({
@@ -1794,15 +1865,20 @@ export function createApp(customLogger?: Logger) {
         throw error;
       }
 
-      // Notify creator (async, best-effort)
+      // Notify creator (async, best-effort) — respects NotificationPreferences
       (async () => {
         try {
           const recipientProfile = await prisma.profile.findUnique({
             where: { id: supportRecord.profileId },
-            include: { owner: true },
+            include: { owner: true, notificationPreferences: true },
           });
 
-          if (recipientProfile?.owner?.email) {
+          const notifyOnSupport =
+            recipientProfile?.notificationPreferences?.notifyOnSupport ??
+            recipientProfile?.notifyOnSupport ??
+            true;
+
+          if (recipientProfile?.owner?.email && notifyOnSupport) {
             sendSupportReceivedEmail({
               to: recipientProfile.owner.email,
               fromAddress: supportRecord.supporterAddress ?? "Anonymous",
@@ -1873,6 +1949,92 @@ export function createApp(customLogger?: Logger) {
       res.status(201).json(supportRecord);
     },
   );
+
+  // ── Profile RSS feed (#478) ───────────────────────────────────────────
+
+  v1Router.get("/profiles/:username/feed.xml", async (req, res) => {
+    const { username } = req.params;
+
+    const profile = await prisma.profile.findUnique({
+      where: { username },
+      include: { milestones: { where: { status: "reached" }, orderBy: { updatedAt: "desc" }, take: 10 } },
+    });
+
+    if (!profile) {
+      return sendError(res, 404, "Profile not found");
+    }
+
+    const transactions = await prisma.supportTransaction.findMany({
+      where: { profileId: profile.id, status: "SUCCESS" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+
+    const baseUrl = process.env.FRONTEND_URL ?? "https://novasupport.xyz";
+    const profileUrl = `${baseUrl}/profile/${username}`;
+    const feedUrl = `${req.protocol}://${req.get("host")}/v1/profiles/${username}/feed.xml`;
+    const now = new Date().toUTCString();
+
+    const escapeXml = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+    const txItems = transactions.map((tx) => {
+      const truncated = tx.supporterAddress
+        ? `${tx.supporterAddress.slice(0, 4)}…${tx.supporterAddress.slice(-4)}`
+        : "Anonymous";
+      const title = `${truncated} supported with ${tx.amount} ${tx.assetCode}`;
+      const description = tx.message
+        ? `${escapeXml(title)} — "${escapeXml(tx.message)}"`
+        : escapeXml(title);
+      return `
+    <item>
+      <title>${escapeXml(title)}</title>
+      <description>${description}</description>
+      <link>${profileUrl}</link>
+      <guid isPermaLink="false">tx-${escapeXml(tx.txHash)}</guid>
+      <pubDate>${new Date(tx.createdAt).toUTCString()}</pubDate>
+      <category>Support</category>
+    </item>`;
+    });
+
+    const milestoneItems = profile.milestones.map((m) => {
+      const title = `Milestone reached: ${m.title}`;
+      const description = m.description
+        ? `${escapeXml(title)} — ${escapeXml(m.description)}`
+        : escapeXml(title);
+      return `
+    <item>
+      <title>${escapeXml(title)}</title>
+      <description>${description}</description>
+      <link>${profileUrl}</link>
+      <guid isPermaLink="false">milestone-${escapeXml(m.id)}</guid>
+      <pubDate>${new Date(m.updatedAt).toUTCString()}</pubDate>
+      <category>Milestone</category>
+    </item>`;
+    });
+
+    const allItems = [...txItems, ...milestoneItems]
+      .sort(() => 0)  // already ordered by recency from their respective queries
+      .join("\n");
+
+    const feed = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>${escapeXml(profile.displayName)} on NovaSupport</title>
+    <link>${profileUrl}</link>
+    <description>Recent support activity for ${escapeXml(profile.displayName)} on NovaSupport — Stellar-native creator support.</description>
+    <language>en-us</language>
+    <lastBuildDate>${now}</lastBuildDate>
+    <atom:link href="${feedUrl}" rel="self" type="application/rss+xml" />
+    <generator>NovaSupport RSS</generator>
+    ${allItems}
+  </channel>
+</rss>`;
+
+    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(feed);
+  });
 
   // ── Analytics ──────────────────────────────────────────────────────────
 
@@ -2496,6 +2658,30 @@ export function createApp(customLogger?: Logger) {
     res.setHeader("Sunset", deprecationDate);
     next();
   }, v1Router);
+
+  // ── Sentry global error handler ───────────────────────────────────────
+  // Must be registered after all routes and before any other error handlers
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.expressErrorHandler({
+      shouldHandleError(error) {
+        // Capture 4xx client errors as well as 5xx server errors
+        return true;
+      },
+    }));
+  }
+
+  // Generic error fallback (logs + returns JSON)
+  app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    logger.error({ err, path: req.path, method: req.method }, "Unhandled application error");
+    if (process.env.SENTRY_DSN) {
+      Sentry.captureException(err, {
+        extra: { path: req.path, method: req.method },
+      });
+    }
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 
   return app;
 }

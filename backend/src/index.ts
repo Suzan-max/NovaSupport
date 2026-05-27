@@ -1,5 +1,21 @@
 import "dotenv/config";
+import * as Sentry from "@sentry/node";
 import { logger } from "./logger.js";
+
+// Initialise Sentry as early as possible so all subsequent imports are instrumented
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV ?? "development",
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    integrations: [
+      Sentry.prismaIntegration(),
+    ],
+  });
+  logger.info("Sentry error monitoring initialised");
+} else {
+  logger.warn("SENTRY_DSN not set — error monitoring is disabled");
+}
 
 const REQUIRED_ENV_VARS = ["DATABASE_URL", "DIRECT_URL"];
 

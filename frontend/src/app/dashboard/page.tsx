@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { 
-  TrendingUp, Users, Wallet, Activity, 
+import { NotificationPreferences } from "@/components/notification-preferences";
+import {
+  TrendingUp, Users, Wallet, Activity,
   ArrowUpRight, ArrowDownRight, Plus, Edit2, Trash2, X
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -434,6 +435,9 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        {/* Notification Preferences */}
+        {username && <NotificationPreferences username={username} />}
       </div>
     </AppShell>
   );
