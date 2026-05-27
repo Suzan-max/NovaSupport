@@ -7,6 +7,7 @@ import { ProfileTabs } from "@/components/profile-tabs";
 import { QRCodeButton } from "@/components/qr-code-button";
 import { EmptyState } from "@/components/empty-state";
 import { EmbedCodeGenerator } from "@/components/embed-widget";
+import { ActivityFeed } from "@/components/activity-feed";
 import { API_BASE_URL } from "@/lib/config";
 
 type PageProps = {
@@ -286,6 +287,13 @@ export default async function ProfilePage({ params }: PageProps) {
             </div>
           )}
           
+          <div className="px-2">
+            <h3 className="text-sm font-semibold uppercase tracking-widest text-steel mb-4">
+              Activity Feed
+            </h3>
+            <ActivityFeed username={profile.username} limit={8} />
+          </div>
+
           <div className="px-2">
             <ProfileTabs username={profile.username} />
           </div>

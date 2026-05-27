@@ -9,6 +9,7 @@ import { StrKey, Horizon } from "@stellar/stellar-sdk";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
 import * as Sentry from "@sentry/node";
+import compression from "compression";
 import { prisma } from "./db.js";
 import { Prisma } from "@prisma/client";
 import { logger } from "./logger.js";
@@ -33,6 +34,10 @@ import {
 import { createHmac } from "crypto";
 import { sanitizeBody, sanitizeQuery } from "./middleware/sanitize.js";
 import { CircuitBreaker } from "./services/circuit-breaker.js";
+import {
+  validateUsername,
+  validateUsernameWithTakenCheck,
+} from "./utils/username-validator.js";
 
 // Extend Express Request to include auth context
 declare global {
@@ -225,6 +230,7 @@ export function createApp(customLogger?: Logger) {
     }),
   );
   app.use(express.json());
+  app.use(compression({ threshold: 1024 }));
   app.use(sanitizeBody);
   app.use(sanitizeQuery);
   app.use(pinoHttp({ logger: customLogger ?? logger }));
@@ -900,6 +906,16 @@ export function createApp(customLogger?: Logger) {
       acceptedAssets,
     } = parsed.data;
 
+    // Validate username against reserved words, profanity, and confusing patterns
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.valid) {
+      req.log.warn({ username }, "username validation failed");
+      return res.status(400).json({
+        error: usernameValidation.error,
+        suggestions: usernameValidation.suggestions,
+      });
+    }
+
     // Verify authenticated wallet matches the profile wallet address
     if (!req.auth || req.auth.walletAddress !== walletAddress) {
       return sendError(
@@ -1517,6 +1533,159 @@ export function createApp(customLogger?: Logger) {
     ]);
 
     res.json({ transactions, total, limit, offset });
+  });
+
+  // ── Export transactions for tax reporting ──────────────────────────────
+
+  /**
+   * @openapi
+   * /profiles/{username}/transactions/export:
+   *   get:
+   *     summary: Export transactions for tax reporting (CSV)
+   *     description: Download transactions as CSV with tax-relevant fields (date, amount, asset, USD value, supporter)
+   *     tags:
+   *       - Profiles
+   *     parameters:
+   *       - in: path
+   *         name: username
+   *         required: true
+   *         schema:
+   *           type: string
+   *       - in: query
+   *         name: startDate
+   *         schema:
+   *           type: string
+   *           format: date-time
+   *         description: ISO 8601 date (e.g., 2025-01-01)
+   *       - in: query
+   *         name: endDate
+   *         schema:
+   *           type: string
+   *           format: date-time
+   *         description: ISO 8601 date (e.g., 2025-12-31)
+   *       - in: query
+   *         name: taxYear
+   *         schema:
+   *           type: integer
+   *         description: Tax year (e.g., 2025) to auto-filter Jan 1 - Dec 31
+   *     responses:
+   *       200:
+   *         description: CSV file with transactions
+   *         content:
+   *           text/csv:
+   *             schema:
+   *               type: string
+   *       400:
+   *         description: Invalid date range or tax year
+   *       404:
+   *         description: Profile not found
+   *       500:
+   *         description: Internal server error
+   */
+  v1Router.get("/profiles/:username/transactions/export", async (req, res) => {
+    const { username } = req.params;
+    const { startDate, endDate, taxYear } = req.query;
+
+    try {
+      const profile = await prisma.profile.findUnique({
+        where: { username },
+      });
+
+      if (!profile) {
+        return sendError(res, 404, "Profile not found");
+      }
+
+      // Parse dates or use tax year
+      let dateStart: Date | undefined;
+      let dateEnd: Date | undefined;
+
+      if (taxYear) {
+        const year = parseInt(taxYear as string, 10);
+        if (isNaN(year) || year < 2000 || year > 2100) {
+          return sendError(res, 400, "Invalid tax year", "INVALID_TAX_YEAR");
+        }
+        dateStart = new Date(`${year}-01-01`);
+        dateEnd = new Date(`${year}-12-31T23:59:59Z`);
+      } else {
+        if (startDate) {
+          dateStart = new Date(startDate as string);
+          if (isNaN(dateStart.getTime())) {
+            return sendError(res, 400, "Invalid startDate format", "INVALID_START_DATE");
+          }
+        }
+        if (endDate) {
+          dateEnd = new Date(endDate as string);
+          if (isNaN(dateEnd.getTime())) {
+            return sendError(res, 400, "Invalid endDate format", "INVALID_END_DATE");
+          }
+        }
+      }
+
+      // Fetch transactions with optional date filtering
+      const transactions = await prisma.supportTransaction.findMany({
+        where: {
+          recipientAddress: profile.walletAddress,
+          ...(dateStart || dateEnd
+            ? {
+                createdAt: {
+                  ...(dateStart ? { gte: dateStart } : {}),
+                  ...(dateEnd ? { lte: dateEnd } : {}),
+                },
+              }
+            : {}),
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      // Generate CSV
+      const headers = [
+        "Date",
+        "Transaction Hash",
+        "Supporter Address",
+        "Asset Code",
+        "Asset Issuer",
+        "Amount",
+        "USD Value (if available)",
+        "Status",
+      ];
+
+      const rows = transactions.map((tx) => [
+        new Date(tx.createdAt).toISOString().split("T")[0], // YYYY-MM-DD format
+        tx.txHash,
+        tx.senderAddress,
+        tx.assetCode,
+        tx.assetIssuer || "native",
+        tx.amount.toString(),
+        tx.usdValue ? tx.usdValue.toString() : "",
+        tx.status,
+      ]);
+
+      // Create CSV content
+      const csvContent = [
+        headers.map((h) => `"${h}"`).join(","),
+        ...rows.map((row) =>
+          row.map((cell) => `"${(cell ?? "").toString().replace(/"/g, '""')}"`)
+            .join(","),
+        ),
+      ].join("\n");
+
+      // Set response headers
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="transactions-${username}-${new Date().toISOString().split("T")[0]}.csv"`,
+      );
+      res.setHeader("Content-Length", Buffer.byteLength(csvContent));
+
+      req.log.info(
+        { username, transactionCount: transactions.length },
+        "transaction export generated",
+      );
+      res.send(csvContent);
+    } catch (e: unknown) {
+      req.log.error({ err: e, username }, "error exporting transactions");
+      return sendError(res, 500, "Internal server error");
+    }
   });
 
   // Issue #229 — 409 DUPLICATE_TX handled below in the full support-transactions handler
