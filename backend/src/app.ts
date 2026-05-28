@@ -2165,7 +2165,7 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    * /profiles/{username}/transactions:
    *   get:
    *     summary: Get profile support transactions
-   *     description: Returns paginated support transactions for a profile, with optional filtering by network, status, and asset code.
+   *     description: Returns paginated support transactions for a profile, with optional filtering by network, status, and asset code, and sorting by date or amount.
    *     parameters:
    *       - in: path
    *         name: username
@@ -2206,6 +2206,13 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    *           type: string
    *           example: XLM
    *         description: Filter by asset code
+   *       - in: query
+   *         name: sortBy
+   *         schema:
+   *           type: string
+   *           enum: [date, amount]
+   *           default: date
+   *         description: Sort transactions by date (newest first) or amount (highest first)
    *     responses:
    *       200:
    *         description: Paginated list of transactions
@@ -2241,10 +2248,14 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    *                         format: date-time
    *                 total:
    *                   type: integer
+   *                   description: Total number of matching transactions (ignores pagination)
    *                 limit:
    *                   type: integer
    *                 offset:
    *                   type: integer
+   *                 sortBy:
+   *                   type: string
+   *                   enum: [date, amount]
    *             example:
    *               transactions:
    *                 - txHash: "abc123def456..."
@@ -2258,6 +2269,13 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    *               total: 42
    *               limit: 20
    *               offset: 0
+   *               sortBy: "date"
+   *       400:
+   *         description: Invalid query parameters
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
    *       404:
    *         description: Profile not found
    *         content:
@@ -2282,6 +2300,13 @@ All errors return JSON with an \`error\` field and optional \`code\`:
     const status = req.query.status as string | undefined;
     const assetCode = req.query.assetCode as string | undefined;
 
+    // Validate sortBy — only "date" and "amount" are accepted
+    const rawSortBy = req.query.sortBy as string | undefined;
+    if (rawSortBy !== undefined && rawSortBy !== "date" && rawSortBy !== "amount") {
+      return sendError(res, 400, "Invalid sortBy value. Must be 'date' or 'amount'.", "INVALID_SORT");
+    }
+    const sortBy: "date" | "amount" = rawSortBy === "amount" ? "amount" : "date";
+
     const profile = await prisma.profile.findUnique({
       where: { username },
     });
@@ -2291,23 +2316,29 @@ All errors return JSON with an \`error\` field and optional \`code\`:
     }
 
     const where = {
-      recipientAddress: profile.walletAddress,
+      profileId: profile.id,
       ...(network ? { stellarNetwork: network } : {}),
       ...(status ? { status } : {}),
       ...(assetCode ? { assetCode } : {}),
     };
+
+    // Sort by date (newest first) or amount (highest first)
+    const orderBy =
+      sortBy === "amount"
+        ? { amount: "desc" as const }
+        : { createdAt: "desc" as const };
 
     const [transactions, total] = await Promise.all([
       prisma.supportTransaction.findMany({
         where,
         take: limit,
         skip: offset,
-        orderBy: { createdAt: "desc" },
+        orderBy,
       }),
       prisma.supportTransaction.count({ where }),
     ]);
 
-    res.json({ transactions, total, limit, offset });
+    res.json({ transactions, total, limit, offset, sortBy });
   });
 
   // ── Export transactions for tax reporting ──────────────────────────────

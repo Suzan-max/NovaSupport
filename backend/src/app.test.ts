@@ -1401,6 +1401,212 @@ async function main() {
     });
   }
 
+  if (hasDb) {
+    // ── Issue #317: GET /profiles/:username/transactions pagination & filtering ──
+
+    // Test 51: GET /profiles/:username/transactions → 404 for unknown username
+    await runTest("GET /profiles/:username/transactions → 404 for unknown username", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      try {
+        const res = await fetch(`${srv.baseUrl}/profiles/nonexistent-user-xyz-317/transactions`);
+        assert.equal(res.status, 404, `Expected 404, got ${res.status}`);
+        const body = await res.json() as { error: string };
+        assert.ok(typeof body.error === "string", "error field must be a string");
+      } finally {
+        await srv.close();
+      }
+    });
+
+    // Test 52: GET /profiles/:username/transactions → 400 for invalid sortBy
+    await runTest("GET /profiles/:username/transactions → 400 for invalid sortBy", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const res = await fetch(`${srv.baseUrl}/profiles/${profile!.username}/transactions?sortBy=invalid`);
+        assert.equal(res.status, 400, `Expected 400, got ${res.status}`);
+        const body = await res.json() as { error: string };
+        assert.ok(body.error.toLowerCase().includes("sortby"), `Expected sortBy in error, got: ${body.error}`);
+      } finally {
+        await srv.close();
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+
+    // Test 53: GET /profiles/:username/transactions → returns paginated list with total
+    await runTest("GET /profiles/:username/transactions → returns paginated list with total count", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const username = profile!.username;
+
+        // Seed 3 transactions
+        await prisma.supportTransaction.createMany({
+          data: [
+            { txHash: `317-a-${randomUUID()}`, amount: "10", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-b-${randomUUID()}`, amount: "20", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-c-${randomUUID()}`, amount: "5",  assetCode: "USDC", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "pending" },
+          ],
+        });
+
+        const res = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?limit=2&offset=0`);
+        assert.equal(res.status, 200, `Expected 200, got ${res.status}`);
+        const body = await res.json() as { transactions: unknown[]; total: number; limit: number; offset: number; sortBy: string };
+
+        assert.ok(Array.isArray(body.transactions), "transactions must be an array");
+        assert.equal(body.transactions.length, 2, "Should return 2 transactions (limit=2)");
+        assert.equal(body.total, 3, "Total should be 3");
+        assert.equal(body.limit, 2);
+        assert.equal(body.offset, 0);
+        assert.equal(body.sortBy, "date", "Default sortBy should be 'date'");
+      } finally {
+        await srv.close();
+        await prisma.supportTransaction.deleteMany({ where: { profileId } });
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+
+    // Test 54: GET /profiles/:username/transactions → filter by status
+    await runTest("GET /profiles/:username/transactions → filter by status returns only matching transactions", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const username = profile!.username;
+
+        await prisma.supportTransaction.createMany({
+          data: [
+            { txHash: `317-s1-${randomUUID()}`, amount: "10", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-s2-${randomUUID()}`, amount: "5",  assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "pending" },
+          ],
+        });
+
+        const res = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?status=SUCCESS`);
+        assert.equal(res.status, 200);
+        const body = await res.json() as { transactions: { status: string }[]; total: number };
+        assert.equal(body.total, 1, "Should only count SUCCESS transactions");
+        assert.ok(body.transactions.every((t) => t.status === "SUCCESS"), "All returned transactions must have status SUCCESS");
+      } finally {
+        await srv.close();
+        await prisma.supportTransaction.deleteMany({ where: { profileId } });
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+
+    // Test 55: GET /profiles/:username/transactions → filter by assetCode
+    await runTest("GET /profiles/:username/transactions → filter by assetCode returns only matching transactions", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const username = profile!.username;
+
+        await prisma.supportTransaction.createMany({
+          data: [
+            { txHash: `317-a1-${randomUUID()}`, amount: "10", assetCode: "XLM",  recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-a2-${randomUUID()}`, amount: "5",  assetCode: "USDC", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+          ],
+        });
+
+        const res = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?assetCode=USDC`);
+        assert.equal(res.status, 200);
+        const body = await res.json() as { transactions: { assetCode: string }[]; total: number };
+        assert.equal(body.total, 1, "Should only count USDC transactions");
+        assert.ok(body.transactions.every((t) => t.assetCode === "USDC"), "All returned transactions must have assetCode USDC");
+      } finally {
+        await srv.close();
+        await prisma.supportTransaction.deleteMany({ where: { profileId } });
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+
+    // Test 56: GET /profiles/:username/transactions → sortBy=amount returns highest first
+    await runTest("GET /profiles/:username/transactions → sortBy=amount returns highest amount first", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const username = profile!.username;
+
+        await prisma.supportTransaction.createMany({
+          data: [
+            { txHash: `317-amt1-${randomUUID()}`, amount: "5",   assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-amt2-${randomUUID()}`, amount: "100", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-amt3-${randomUUID()}`, amount: "25",  assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+          ],
+        });
+
+        const res = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?sortBy=amount`);
+        assert.equal(res.status, 200);
+        const body = await res.json() as { transactions: { amount: string }[]; sortBy: string };
+        assert.equal(body.sortBy, "amount");
+        assert.ok(body.transactions.length >= 2, "Should return at least 2 transactions");
+        // Verify descending order by amount
+        const amounts = body.transactions.map((t) => parseFloat(t.amount));
+        for (let i = 0; i < amounts.length - 1; i++) {
+          assert.ok(amounts[i] >= amounts[i + 1], `Amount at index ${i} (${amounts[i]}) should be >= index ${i + 1} (${amounts[i + 1]})`);
+        }
+      } finally {
+        await srv.close();
+        await prisma.supportTransaction.deleteMany({ where: { profileId } });
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+
+    // Test 57: GET /profiles/:username/transactions → offset pagination works correctly
+    await runTest("GET /profiles/:username/transactions → offset pagination returns correct page", async () => {
+      const srv = await startTestServer(makeLogStream().stream);
+      const userId = await seedUser();
+      const profileId = await seedProfile(userId);
+      try {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+        const username = profile!.username;
+
+        await prisma.supportTransaction.createMany({
+          data: [
+            { txHash: `317-pg1-${randomUUID()}`, amount: "10", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-pg2-${randomUUID()}`, amount: "20", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+            { txHash: `317-pg3-${randomUUID()}`, amount: "30", assetCode: "XLM", recipientAddress: walletAddress, profileId, stellarNetwork: "TESTNET", status: "SUCCESS" },
+          ],
+        });
+
+        // Page 1: limit=2, offset=0
+        const page1 = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?limit=2&offset=0`);
+        const body1 = await page1.json() as { transactions: unknown[]; total: number };
+        assert.equal(body1.transactions.length, 2);
+        assert.equal(body1.total, 3);
+
+        // Page 2: limit=2, offset=2
+        const page2 = await fetch(`${srv.baseUrl}/profiles/${username}/transactions?limit=2&offset=2`);
+        const body2 = await page2.json() as { transactions: unknown[]; total: number };
+        assert.equal(body2.transactions.length, 1, "Second page should have 1 remaining transaction");
+        assert.equal(body2.total, 3, "Total should still be 3 regardless of offset");
+      } finally {
+        await srv.close();
+        await prisma.supportTransaction.deleteMany({ where: { profileId } });
+        await prisma.acceptedAsset.deleteMany({ where: { profileId } });
+        await prisma.profile.deleteMany({ where: { id: profileId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    });
+  }
+
   if (hasDb) await prisma.$disconnect();
 }
 
