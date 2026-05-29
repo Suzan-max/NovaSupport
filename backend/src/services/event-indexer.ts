@@ -1,4 +1,8 @@
+ feat/425-multiple-wallet-connections
 // #281 / #423: Contract event indexing service.
+
+// #321: Contract event indexing service.
+ main
 //
 // Polls Soroban RPC for `SupportEvent`s emitted by the configured contract
 // and persists them as `SupportTransaction` rows so the backend stays in
@@ -9,6 +13,11 @@
 // The service is intentionally storage-only inside the worker loop — fetch
 // + parse logic is split into pure functions so unit tests can drive it
 // without a real RPC endpoint.
+//
+// Orphan resolution: after each poll, orphaned transactions (profileId =
+// "__orphan__") are resolved by matching recipientAddress to a Profile's
+// walletAddress. This keeps the indexer eventually consistent with the
+// profile registry without blocking the hot path.
 
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "../logger.js";
@@ -197,6 +206,51 @@ export class EventIndexer {
     return { ingested, nextCursor };
   }
 
+  /**
+   * Resolve orphaned transactions by matching recipientAddress to a Profile's
+   * walletAddress. Called after each successful poll to keep the database
+   * eventually consistent with the profile registry.
+   *
+   * Returns the number of transactions resolved.
+   */
+  async resolveOrphans(): Promise<number> {
+    const orphans = await this.prisma.supportTransaction.findMany({
+      where: { profileId: "__orphan__" },
+      select: { id: true, recipientAddress: true },
+    });
+
+    if (orphans.length === 0) return 0;
+
+    // Collect unique recipient addresses to look up in one query
+    const addresses = [...new Set(orphans.map((o) => o.recipientAddress))];
+    const profiles = await this.prisma.profile.findMany({
+      where: { walletAddress: { in: addresses } },
+      select: { id: true, walletAddress: true },
+    });
+
+    const addressToProfileId = new Map(
+      profiles.map((p) => [p.walletAddress, p.id]),
+    );
+
+    let resolved = 0;
+    for (const orphan of orphans) {
+      const profileId = addressToProfileId.get(orphan.recipientAddress);
+      if (!profileId) continue;
+
+      await this.prisma.supportTransaction.update({
+        where: { id: orphan.id },
+        data: { profileId },
+      });
+      resolved += 1;
+    }
+
+    if (resolved > 0) {
+      logger.info({ resolved }, "resolved orphaned transactions to profiles");
+    }
+
+    return resolved;
+  }
+
   private async readCursor(): Promise<string> {
     const row = await this.prisma.indexerCursor.findUnique({
       where: {
@@ -261,6 +315,7 @@ export class EventIndexer {
   private async tick(): Promise<void> {
     if (this.stopped) return;
     try {
+ feat/425-multiple-wallet-connections
       let totalIngested = 0;
       let pages = 0;
       // Drain multiple pages per tick so large event histories (backfill)
@@ -276,6 +331,15 @@ export class EventIndexer {
           { ingested: totalIngested, pages, contractId: this.contractId },
           "indexed events",
         );
+
+      const { ingested } = await this.pollOnce();
+      if (ingested > 0) {
+        logger.info({ ingested, contractId: this.contractId }, "indexed events");
+        // Resolve orphaned transactions after ingesting new events
+        await this.resolveOrphans().catch((err) => {
+          logger.warn({ err }, "orphan resolution failed — will retry next tick");
+        });
+     main
       }
     } finally {
       this.scheduleNextTick(this.pollIntervalMs);
