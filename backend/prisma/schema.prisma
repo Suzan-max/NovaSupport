@@ -86,3 +86,30 @@ model Milestone {
   @@index([profileId])
 }
 
+model Webhook {
+  id        String             @id @default(cuid())
+  url       String
+  secret    String
+  active    Boolean            @default(true)
+  profileId String
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  profile   Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([profileId])
+}
+
+model WebhookDelivery {
+  id           String   @id @default(cuid())
+  webhookId    String
+  event        String
+  status       String
+  statusCode   Int?
+  responseBody String?
+  createdAt    DateTime @default(now())
+  webhook      Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+}
+
