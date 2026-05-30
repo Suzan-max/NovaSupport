@@ -4023,6 +4023,104 @@ All errors return JSON with an \`error\` field and optional \`code\`:
     return res.json({ breakdown, total: Number(total.toFixed(7)) });
   });
 
+  // ── Stellar Federation endpoint ───────────────────────────────────────
+  // Required by the Stellar federation protocol so wallets can resolve
+  // <username>*novasupport.xyz into a Stellar account ID.
+  // Spec: https://developers.stellar.org/docs/learn/encyclopedia/network-configuration/federation
+  /**
+   * @openapi
+   * /federation:
+   *   get:
+   *     summary: Stellar federation address resolution
+   *     description: |
+   *       Resolves a Stellar federation address (e.g. alice*novasupport.xyz) to a
+   *       Stellar account ID. Called by wallets and the Stellar network.
+   *       Access-Control-Allow-Origin is set to * as required by the Stellar spec.
+   *     parameters:
+   *       - in: query
+   *         name: q
+   *         required: true
+   *         schema:
+   *           type: string
+   *           example: alice*novasupport.xyz
+   *         description: The federation address to resolve
+   *       - in: query
+   *         name: type
+   *         schema:
+   *           type: string
+   *           example: name
+   *         description: Lookup type — always "name" for forward lookups
+   *     responses:
+   *       200:
+   *         description: Resolved federation address
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 stellar_address:
+   *                   type: string
+   *                   example: alice*novasupport.xyz
+   *                 account_id:
+   *                   type: string
+   *                   example: GABC...XYZ
+   *       400:
+   *         description: Missing or invalid federation address
+   *       404:
+   *         description: No profile found for that username
+   */
+  app.get("/federation", async (req, res) => {
+    // Stellar spec requires CORS open to all origins on this endpoint
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const q = getQueryString(req.query.q);
+
+    if (!q) {
+      return sendError(res, 400, "Missing required parameter: q", "MISSING_PARAMETER");
+    }
+
+    // Only handle forward lookups for this domain
+    const FEDERATION_DOMAIN = process.env.FEDERATION_DOMAIN ?? "novasupport.xyz";
+    const suffix = `*${FEDERATION_DOMAIN}`;
+
+    if (!q.endsWith(suffix)) {
+      return sendError(
+        res,
+        400,
+        `Federation address must end with ${suffix}`,
+        "INVALID_FEDERATION_ADDRESS",
+      );
+    }
+
+    const username = q.slice(0, q.length - suffix.length);
+
+    if (!username) {
+      return sendError(res, 400, "Invalid federation address: missing username", "INVALID_FEDERATION_ADDRESS");
+    }
+
+    try {
+      const profile = await prisma.profile.findUnique({
+        where: { username },
+        select: { walletAddress: true },
+      });
+
+      if (!profile) {
+        return res.status(404).json({
+          code: "not_found",
+          message: "No profile found for that username",
+        });
+      }
+
+      return res.json({
+        stellar_address: q,
+        account_id: profile.walletAddress,
+      });
+    } catch (e: unknown) {
+      req.log.error({ err: e }, "database error in federation lookup");
+      return sendError(res, 500, "Internal server error");
+    }
+  });
+
   // ── Mount v1 router ───────────────────────────────────────────────────
   // Primary versioned endpoint: /v1/...
   app.use("/v1", v1Router);
