@@ -220,12 +220,22 @@ function createRateLimiters() {
     message: { error: "Too many requests, please try again later." },
   });
 
+  // Dedicated auth limiter — 10 requests per 15 min per IP (#561)
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many auth attempts, please try again later." },
+  });
+
   return {
     globalLimiter,
     writeLimiter,
     profileCreationLimiter,
     resendLimiter,
     viewCountLimiter,
+    authLimiter,
   };
 }
 
@@ -305,6 +315,7 @@ export function createApp(customLogger?: Logger) {
     profileCreationLimiter,
     resendLimiter,
     viewCountLimiter,
+    authLimiter,
   } = createRateLimiters();
 
   const swaggerSpec = swaggerJsdoc({
@@ -426,6 +437,26 @@ All errors return JSON with an \`error\` field and optional \`code\`:
   )
     .split(",")
     .map((o) => o.trim());
+
+  // ── HTTP security headers (#564) ─────────────────────────────────────
+  app.use((_req, res, next) => {
+    // Prevent MIME-type sniffing
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Disallow framing by other origins
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    // Don't send referrer to cross-origin destinations
+    res.setHeader("Referrer-Policy", "no-referrer");
+    // Disable DNS prefetching
+    res.setHeader("X-DNS-Prefetch-Control", "off");
+    // Enforce HTTPS for 1 year (only meaningful in production behind TLS)
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
+    // Allow cross-origin resource loading (e.g. Supabase avatar images)
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  });
 
   app.use(
     cors({
@@ -606,7 +637,7 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    *                   example: Invalid wallet address
    */
   // Request a challenge nonce for wallet signature
-  v1Router.post("/auth/challenge", (req, res) => {
+  v1Router.post("/auth/challenge", authLimiter, (req, res) => {
     const { walletAddress } = req.body;
 
     if (!walletAddress || !isValidStellarAddress(walletAddress)) {
@@ -654,7 +685,7 @@ All errors return JSON with an \`error\` field and optional \`code\`:
    *       401:
    *         description: Invalid signature
    */
-  v1Router.post("/auth/verify", async (req, res) => {
+  v1Router.post("/auth/verify", authLimiter, async (req, res) => {
     const parsed = verifySchema.safeParse(req.body);
     if (!parsed.success) {
       return sendError(res, 400, "Invalid request body");
