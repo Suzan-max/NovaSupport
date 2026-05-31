@@ -3,13 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { Toast } from "@/components/toast";
 import { 
   TrendingUp, Users, Wallet, Activity, 
-  ArrowUpRight, ArrowDownRight, Plus, Edit2, Trash2, X, Link2, Eye, EyeOff, Copy, Check, ChevronDown, ChevronRight
-import { NotificationPreferences } from "@/components/notification-preferences";
-import {
-  TrendingUp, Users, Wallet, Activity,
-  ArrowUpRight, ArrowDownRight, Plus, Edit2, Trash2, X
+  ArrowUpRight, ArrowDownRight, Plus, Edit2, Trash2, X, Link2, Eye, EyeOff, Copy, Check, ChevronDown, ChevronRight, Download
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatRateLimitedMessage, parseRateLimitInfo } from "@/lib/rate-limit";
@@ -85,6 +82,8 @@ export default function DashboardPage() {
   const [expandedDeliveries, setExpandedDeliveries] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Record<string, WebhookDelivery[]>>({});
   const [deliveriesLoading, setDeliveriesLoading] = useState<string | null>(null);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     async function loadDashboard() {
@@ -301,6 +300,35 @@ export default function DashboardPage() {
       document.body.removeChild(textarea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownloadCsv = async () => {
+    if (!username) return;
+    setCsvLoading(true);
+    try {
+      const token = localStorage.getItem("authToken");
+      const res = await fetch(`${API_BASE_URL}/profiles/${username}/transactions/export`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to download CSV");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `novasupport-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setToast({ message: err.message || "Failed to download CSV", type: "error" });
+    } finally {
+      setCsvLoading(false);
     }
   };
 
@@ -774,7 +802,47 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        {/* Transactions Section */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-steel">
+              Transactions
+            </h2>
+            <button
+              onClick={handleDownloadCsv}
+              disabled={csvLoading}
+              className="flex items-center gap-2 rounded-lg bg-mint/10 px-4 py-2 text-xs font-semibold text-mint hover:bg-mint/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {csvLoading ? (
+                <>
+                  <div className="h-3 w-3 animate-spin rounded-full border border-mint border-t-transparent" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Download size={14} />
+                  Download CSV
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <p className="text-sm text-steel">
+              Download all your transactions as a CSV file for accounting and analysis purposes.
+            </p>
+          </div>
+        </section>
       </div>
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </AppShell>
   );
 }

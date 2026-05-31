@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   History, Award, LayoutDashboard,
   ExternalLink, Search, Calendar, X
@@ -8,6 +8,7 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { EmptyState } from "./empty-state";
+import { useRouter } from "next/navigation";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
@@ -68,11 +69,43 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 export function ProfileTabs({ username }: { username: string }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"history" | "badges">("history");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [loading, setLoading] = useState(false);
   const [badgesLoading, setBadgesLoading] = useState(false);
+
+  // ── URL hash sync ───────────────────────────────────────────────────────
+  useEffect(() => {
+    // Read hash on mount
+    const hash = window.location.hash.slice(1); // Remove the #
+    if (hash === "badges") {
+      setActiveTab("badges");
+    } else {
+      setActiveTab("history"); // Default to history
+    }
+
+    // Listen for hash changes (back/forward navigation)
+    const handleHashChange = () => {
+      const newHash = window.location.hash.slice(1);
+      if (newHash === "badges") {
+        setActiveTab("badges");
+      } else {
+        setActiveTab("history");
+      }
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  // Update URL hash when tab changes
+  const handleTabChange = useCallback((tab: "history" | "badges") => {
+    setActiveTab(tab);
+    const newHash = tab === "badges" ? "#badges" : "#history";
+    window.history.replaceState(null, "", newHash);
+  }, []);
 
   // ── Search state (#472) ────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -155,13 +188,13 @@ export function ProfileTabs({ username }: { username: string }) {
         <div className="flex gap-8">
           <TabButton
             active={activeTab === "history"}
-            onClick={() => setActiveTab("history")}
+            onClick={() => handleTabChange("history")}
             icon={<History size={16} />}
             label="Support History"
           />
           <TabButton
             active={activeTab === "badges"}
-            onClick={() => setActiveTab("badges")}
+            onClick={() => handleTabChange("badges")}
             icon={<Award size={16} />}
             label="Badges"
           />
