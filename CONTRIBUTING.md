@@ -49,6 +49,61 @@ cargo test
 
 Install Soroban CLI separately if you want to build, deploy, or inspect the contract on Stellar Testnet.
 
+---
+
+## Working on the Contract
+
+The on-chain logic lives in `contract/contracts/support_page/src/lib.rs` and is compiled to WASM for deployment on Stellar.
+
+### Prerequisites
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Add the WASM compilation target
+rustup target add wasm32-unknown-unknown
+
+# Install Stellar CLI (includes Soroban support)
+cargo install --locked stellar-cli --features opt
+```
+
+### Run contract tests
+
+```bash
+cd contract
+cargo test
+```
+
+All tests must pass before opening a PR.
+
+### Build the WASM
+
+```bash
+stellar contract build
+```
+
+Output: `target/wasm32-unknown-unknown/release/support_page.wasm`
+
+### Deploy to Testnet (maintainers only)
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/support_page.wasm \
+  --network testnet \
+  --source <your-alias>
+```
+
+`<your-alias>` refers to a Stellar CLI identity configured locally via `stellar keys generate` or `stellar keys add`.
+
+### Adding a new function
+
+1. Add the function to `src/lib.rs`
+2. Add a unit test inside the `#[cfg(test)]` block at the bottom of the file
+3. Run `cargo test` — all tests must pass before opening a PR
+
+<!-- Closes #563 -->
+
 
 ### Local Database Setup (Docker)
 
