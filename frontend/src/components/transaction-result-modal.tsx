@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { stellarConfig, withStellarRetry } from "@/lib/stellar";
+import { stellarConfig, withStellarRetry, stellarExpertUrl } from "@/lib/stellar";
 
 type TransactionResultModalProps = {
   txHash: string | null;
@@ -42,7 +42,7 @@ export function TransactionResultModal({
 
   const explorerUrl = useMemo(() => {
     if (!txHash) return null;
-    return `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    return stellarExpertUrl("tx", txHash);
   }, [txHash]);
 
   useEffect(() => {
@@ -127,7 +127,7 @@ export function TransactionResultModal({
   if (!isOpen || !txHash) return null;
 
   const safeExplorerUrl =
-    explorerUrl ?? `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    explorerUrl ?? stellarExpertUrl("tx", txHash);
 
   const handleCopy = async () => {
     try {

@@ -8,6 +8,7 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { EmptyState } from "./empty-state";
+import { stellarExpertUrl } from "@/lib/stellar";
 import { useRouter } from "next/navigation";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
@@ -375,7 +376,7 @@ export function ProfileTabs({ username }: { username: string }) {
                         </td>
                         <td className="px-6 py-4">
                           <a
-                            href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
+                            href={stellarExpertUrl("tx", tx.txHash)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 font-mono text-xs hover:text-mint transition-colors"

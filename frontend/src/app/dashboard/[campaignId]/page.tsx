@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { API_BASE_URL } from "@/lib/config";
+import { stellarExpertUrl } from "@/lib/stellar";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
@@ -215,7 +216,7 @@ function downloadCsv(rows: TransactionCsvRow[]): void {
     "Stellar Expert URL",
   ];
   const lines = rows.map((row) => {
-    const stellarExpertUrl = `https://stellar.expert/explorer/testnet/tx/${row.txHash}`;
+    const expertUrl = stellarExpertUrl("tx", row.txHash);
     return [
       new Date(row.createdAt).toISOString(),
       row.amount,
@@ -224,7 +225,7 @@ function downloadCsv(rows: TransactionCsvRow[]): void {
       row.message,
       row.status,
       row.txHash,
-      stellarExpertUrl,
+      expertUrl,
     ].map(csvEscape).join(",");
   });
 
@@ -246,6 +247,20 @@ type AssetBreakdownEntry = {
   percentage: number;
 };
 
+type RecurringDrip = {
+  id: string;
+  profileId?: string;
+  profileUsername?: string;
+  profileDisplayName?: string;
+  supporterAddress?: string;
+  amount: string;
+  assetCode: string;
+  frequency: string;
+  nextRunAt: string;
+  status: string;
+  createdAt: string;
+};
+
 export default function DashboardPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const [data, setData] = useState<AnalyticsData | null>(null);
@@ -263,6 +278,9 @@ export default function DashboardPage() {
   const [resendingVerification, setResendingVerification] = useState(false);
   const [verificationBannerMsg, setVerificationBannerMsg] = useState<string | null>(null);
   const [verificationBannerType, setVerificationBannerType] = useState<"success" | "error">("success");
+  const [drips, setDrips] = useState<RecurringDrip[]>([]);
+  const [dripsLoading, setDripsLoading] = useState(true);
+  const [dripActionLoading, setDripActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -338,8 +356,20 @@ export default function DashboardPage() {
   }, [campaignId, selectedPeriod]);
 
   useEffect(() => {
-    const wallet = window.localStorage.getItem("walletAddress");
-    if (wallet) setConnectedWallet(wallet);
+    async function getFreighterAddress() {
+      try {
+        const { getAddress } = await import("@stellar/freighter-api");
+        const result = await getAddress();
+        if (result.error) {
+          setConnectedWallet("");
+        } else {
+          setConnectedWallet(result.address);
+        }
+      } catch {
+        setConnectedWallet("");
+      }
+    }
+    getFreighterAddress();
   }, []);
 
   const isOwner = Boolean(
@@ -348,6 +378,63 @@ export default function DashboardPage() {
     settings.walletAddress === connectedWallet
   );
   const isChartEmpty = chartData.length === 0 || chartData.every((point) => point.amount === 0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchDrips() {
+      setDripsLoading(true);
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
+        const endpoint = isOwner
+          ? `${API_BASE_URL}/recurring-support?profileId=${campaignId}`
+          : `${API_BASE_URL}/recurring-support`;
+
+        const res = await fetch(endpoint, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+
+        if (!cancelled) {
+          if (res.ok) {
+            const json = await res.json();
+            setDrips(Array.isArray(json) ? json : []);
+          } else {
+            setDrips([]);
+          }
+        }
+      } catch {
+        if (!cancelled) setDrips([]);
+      } finally {
+        if (!cancelled) setDripsLoading(false);
+      }
+    }
+
+    fetchDrips();
+
+    return () => { cancelled = true; };
+  }, [campaignId, isOwner]);
+
+  async function handleDripAction(id: string, action: "paused" | "cancelled") {
+    setDripActionLoading(id);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
+      const res = await fetch(`${API_BASE_URL}/recurring-support/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: action }),
+      });
+      if (res.ok) {
+        setDrips((prev) => prev.filter((d) => d.id !== id));
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setDripActionLoading(null);
+    }
+  }
 
   async function handleDownloadCsv() {
     if (!isOwner) return;
@@ -796,6 +883,91 @@ export default function DashboardPage() {
             )}
           </section>
         )}
+        {/* Recurring Drips */}
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+          <div className="mb-6 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-widest text-steel font-mono">
+              Active Drips
+            </h3>
+            {drips.length > 0 && (
+              <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-bold text-purple-400">
+                {drips.length} active
+              </span>
+            )}
+          </div>
+
+          {dripsLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }, (_, i) => (
+                <div key={i} className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                  <div className="h-4 w-24 animate-pulse rounded bg-white/10" />
+                  <div className="h-4 w-16 animate-pulse rounded bg-white/10" />
+                  <div className="h-4 w-20 animate-pulse rounded bg-white/10" />
+                  <div className="ml-auto h-8 w-20 animate-pulse rounded-xl bg-white/10" />
+                </div>
+              ))}
+            </div>
+          ) : drips.length === 0 ? (
+            <p className="py-8 text-center text-sm text-steel">
+              No active drips{isOwner ? " set up for this profile" : ""}.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {drips.map((drip) => (
+                <div
+                  key={drip.id}
+                  className="flex flex-wrap items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4"
+                >
+                  {isOwner ? (
+                    <>
+                      <span className="min-w-0 flex-1 font-mono text-xs text-sky/80">
+                        {drip.supporterAddress
+                          ? `${drip.supporterAddress.slice(0, 6)}...${drip.supporterAddress.slice(-4)}`
+                          : "Unknown"}
+                      </span>
+                    </>
+                  ) : (
+                    <Link
+                      href={`/profile/${drip.profileUsername}`}
+                      className="min-w-0 flex-1 text-sm font-semibold text-white hover:text-mint transition-colors"
+                    >
+                      {drip.profileDisplayName ?? drip.profileUsername}
+                    </Link>
+                  )}
+                  <span className="text-sm font-bold text-white">
+                    {parseFloat(drip.amount).toLocaleString()} {drip.assetCode}
+                  </span>
+                  <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-sky/70">
+                    {drip.frequency}
+                  </span>
+                  <span className="text-xs text-sky/60">
+                    Next: {new Date(drip.nextRunAt).toLocaleDateString()}
+                  </span>
+                  {!isOwner && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDripAction(drip.id, "paused")}
+                        disabled={dripActionLoading === drip.id}
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-sky/70 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        {dripActionLoading === drip.id ? "..." : "Pause"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDripAction(drip.id, "cancelled")}
+                        disabled={dripActionLoading === drip.id}
+                        className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {dripActionLoading === drip.id ? "..." : "Cancel"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </AppShell>
   );

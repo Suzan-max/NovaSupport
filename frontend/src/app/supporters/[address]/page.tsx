@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import { API_BASE_URL } from "@/lib/config";
+import { stellarExpertUrl } from "@/lib/stellar";
 import { StrKey } from "@stellar/stellar-sdk";
 import {
   AlertCircle,
@@ -11,12 +12,35 @@ import {
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
+import type { Metadata } from "next";
 
 type PageProps = {
   params: {
     address: string;
   };
 };
+
+function truncateTitle(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const short = truncateTitle(params.address);
+  return {
+    title: `${short} — Giving history on NovaSupport`,
+    description: `See all the Stellar creators this wallet has supported on NovaSupport.`,
+    openGraph: {
+      title: `${short} on NovaSupport`,
+      description: `Giving history for Stellar wallet ${short}`,
+      url: `https://novasupport.xyz/supporters/${params.address}`,
+    },
+    twitter: {
+      card: "summary",
+      title: `${short} on NovaSupport`,
+      description: `Giving history for Stellar wallet ${short}`,
+    },
+  };
+}
 
 type AssetTotal = {
   assetCode: string;
@@ -306,7 +330,7 @@ export default async function SupporterPage({ params }: PageProps) {
                         {tx.txHash}
                       </code>
                       <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
+                        href={stellarExpertUrl("tx", tx.txHash)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="shrink-0 text-sky transition hover:text-white"

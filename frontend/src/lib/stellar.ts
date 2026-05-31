@@ -236,6 +236,11 @@ export function getNetworkLabel(): string {
   return stellarConfig.stellarNetwork === "PUBLIC" ? "Mainnet" : "Testnet";
 }
 
+export function stellarExpertUrl(type: "tx" | "account" | "contract", id: string): string {
+  const net = stellarConfig.stellarNetwork === "PUBLIC" ? "public" : "testnet";
+  return `https://stellar.expert/explorer/${net}/${type}/${id}`;
+}
+
 export function getDefaultNetworkPassphrase(): string {
   return stellarConfig.stellarNetwork === "PUBLIC"
     ? Networks.PUBLIC

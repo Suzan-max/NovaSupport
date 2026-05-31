@@ -12,6 +12,7 @@ import { EmbedCodeGenerator } from "@/components/embed-widget";
 import { MilestoneCard } from "@/components/milestone-card";
 import { ActivityFeed } from "@/components/activity-feed";
 import { API_BASE_URL, SITE_URL } from "@/lib/config";
+import { stellarExpertUrl } from "@/lib/stellar";
 
 type PageProps = {
   params: {
@@ -325,7 +326,7 @@ export default async function ProfilePage({ params }: PageProps) {
                   >
                     <span className="text-xs text-sky/70">#{entry.rank}</span>
                     <a
-                      href={`https://stellar.expert/explorer/testnet/account/${entry.supporterAddress}`}
+                      href={stellarExpertUrl("account", entry.supporterAddress)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-xs text-white hover:text-mint transition-colors"

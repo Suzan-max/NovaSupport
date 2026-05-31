@@ -1,6 +1,6 @@
 "use client";
 import { useState, useCallback, KeyboardEvent } from "react";
-import { isValidStellarAddress } from "@/lib/stellar";
+import { isValidStellarAddress, stellarExpertUrl } from "@/lib/stellar";
 import { useToast } from "@/lib/use-toast";
 import { SITE_URL } from "@/lib/config";
 
@@ -134,7 +134,7 @@ export function ProfileCard({
   const tweetText = encodeURIComponent(`Support me on NovaSupport: ${profileUrl}`);
   const tweetUrl = `https://twitter.com/intent/tweet?text=${tweetText}`;
 
-  const expertUrl = `https://stellar.expert/explorer/testnet/account/${walletAddress}`;
+  const expertUrl = stellarExpertUrl("account", walletAddress);
 
   if (isLoading) return <ProfileCardSkeleton />;
 

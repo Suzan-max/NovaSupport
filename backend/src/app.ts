@@ -3771,13 +3771,51 @@ All errors return JSON with an \`error\` field and optional \`code\`:
     const user = await prisma.user.findFirst({ where: { email: req.auth!.walletAddress } });
     if (!user) return sendError(res, 401, "User not found");
 
+    const { profileId } = req.query as { profileId?: string };
+
+    if (profileId) {
+      // Creator view — return drips for this profile if caller owns it
+      const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+      if (!profile) return sendError(res, 404, "Profile not found");
+      if (profile.walletAddress !== req.auth!.walletAddress) return sendError(res, 403, "Forbidden");
+
+      const subscriptions = await prisma.recurringSupport.findMany({
+        where: { profileId, status: { not: "cancelled" } },
+        include: { supporter: { select: { email: true } } },
+        orderBy: { createdAt: "desc" },
+      });
+
+      return res.json(subscriptions.map((s) => ({
+        id: s.id,
+        supporterAddress: s.supporter.email,
+        amount: s.amount.toString(),
+        assetCode: s.assetCode,
+        frequency: s.frequency,
+        nextRunAt: s.nextRunAt,
+        status: s.status,
+        createdAt: s.createdAt,
+      })));
+    }
+
+    // Supporter view — return the authenticated user's own drip subscriptions
     const subscriptions = await prisma.recurringSupport.findMany({
       where: { supporterId: user.id, status: { not: "cancelled" } },
       include: { profile: { select: { username: true, displayName: true } } },
       orderBy: { createdAt: "desc" },
     });
 
-    return res.json(subscriptions);
+    return res.json(subscriptions.map((s) => ({
+      id: s.id,
+      profileId: s.profileId,
+      profileUsername: s.profile.username,
+      profileDisplayName: s.profile.displayName,
+      amount: s.amount.toString(),
+      assetCode: s.assetCode,
+      frequency: s.frequency,
+      nextRunAt: s.nextRunAt,
+      status: s.status,
+      createdAt: s.createdAt,
+    })));
   });
 
   const patchRecurringSupportSchema = z.object({
