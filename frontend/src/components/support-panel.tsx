@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, KeyboardEvent } from "react";
 import { useToast } from "@/lib/use-toast";
 import {
   Asset as StellarAsset,
+  BASE_FEE,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import {
@@ -22,7 +23,7 @@ import {
 } from "@/lib/wallet-adapters";
 import { WalletConnect } from "./wallet-connect";
 import { TransactionResultModal } from "./transaction-result-modal";
-import { API_BASE_URL } from "@/lib/config";
+import { API_BASE_URL, STELLAR_NETWORK } from "@/lib/config";
 import { formatRateLimitedMessage, parseRateLimitInfo } from "@/lib/rate-limit";
 
 type Asset = {
