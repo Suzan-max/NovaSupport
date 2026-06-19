@@ -179,6 +179,7 @@ function createRateLimiters() {
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
     message: {
       error: "Too many requests, please try again later.",
       code: "RATE_LIMIT_EXCEEDED",
@@ -191,6 +192,7 @@ function createRateLimiters() {
     limit: 3,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
     keyGenerator: (req) => req.ip ?? "unknown",
     message: {
       error: "Too many profiles created from this IP address. You can create up to 3 profiles per hour. Please try again later.",
@@ -203,6 +205,7 @@ function createRateLimiters() {
     limit: 1,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
     message: {
       error: "Verification email already sent. Please wait 5 minutes before trying again.",
       code: "RATE_LIMIT_EXCEEDED",
@@ -226,6 +229,7 @@ function createRateLimiters() {
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
     message: { error: "Too many auth attempts, please try again later." },
   });
 
